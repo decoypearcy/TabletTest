@@ -171,10 +171,22 @@ between two active pointers.
 
 ## Locking orientation
 
-Edit `manifest.webmanifest` -> `"orientation"`: `"portrait"`, `"landscape"`, or `"any"`.
-Android respects this for the installed app. iOS standalone does **not** enforce it - if
-you need a fixed orientation on iPhone, design your `draw()` to handle both, or show a
-"rotate your device" overlay when `W`/`H` are the wrong way round.
+There are two ways, because browsers only allow a page to lock rotation while it's
+**fullscreen** or installed as a **PWA** - a plain browser tab can't lock on its own.
+
+**Installed app (permanent, no code):** edit `manifest.webmanifest` -> `"orientation"`:
+`"portrait"`, `"landscape"`, or `"any"`. The home-screen-installed app then stays locked.
+Android respects this. iOS standalone does **not** enforce it - if you need a fixed
+orientation on iPhone, design your `draw()` to handle both, or show a "rotate your device"
+overlay when `W`/`H` are the wrong way round.
+
+**At runtime (works in a browser tab too):** call `Orientation.lockCurrent()` from a tap.
+It briefly enters fullscreen, then locks to whatever orientation the device is currently in
+(via the Screen Orientation API). The demo calls this when you tap "Enable motion", so the
+screen stops flipping while you test the accelerometer. To lock a specific way instead,
+rotate the device first, then tap - or call `screen.orientation.lock("landscape")` yourself
+after going fullscreen. This is Android/Chrome; iOS Safari ignores it (use the manifest +
+home-screen install there, or just turn off the system auto-rotate).
 
 ## After you change anything
 

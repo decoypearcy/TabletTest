@@ -38,10 +38,24 @@
       height: 100dvh;                  /* correct fullscreen height on mobile */
       touch-action: none;
     }
+    /* Real DOM button for the motion-permission grant - iOS only shows the
+       permission prompt from a genuine click, not a canvas pointer event. */
+    #enableBtn {
+      position: fixed;
+      display: none;
+      background: #c9a96e;
+      color: #4a3010;
+      border: none;
+      border-radius: 8px;
+      font: 500 13px system-ui, sans-serif;
+      padding: 0;
+      z-index: 10;
+    }
   </style>
 </head>
 <body>
   <canvas id="c"></canvas>
+  <button id="enableBtn">Tap to enable motion</button>
 
   <script>
   "use strict";
@@ -96,6 +110,10 @@
       this.shake = 0;                 // brief flash when a shake is detected
       this._lastMag = null;
       this.ball = null;
+      // Real DOM button: iOS only raises the motion-permission prompt from a
+      // genuine click. One handler, works on Android too.
+      this.enableBtn = document.getElementById("enableBtn");
+      this.enableBtn.onclick = () => { Motion.enable(); Orientation.lockCurrent(); };
       this.layout();
     },
 
@@ -112,6 +130,10 @@
       const c2 = this.cards[1];
       const bw = Math.min(220, c2.w - 32), bh = 40;
       this.btn = { x: c2.x + (c2.w - bw) / 2, y: c2.y + c2.h - bh - 16, w: bw, h: bh };
+      if (this.enableBtn) {           // place the DOM button over card 2 (CSS px)
+        const b = this.btn, s = this.enableBtn.style;
+        s.left = b.x + "px"; s.top = b.y + "px"; s.width = b.w + "px"; s.height = b.h + "px";
+      }
       if (!this.ball) this.ball = { x: c2.x + c2.w / 2, y: c2.y + c2.h / 2, vx: 0, vy: 0 };
     },
 
@@ -138,13 +160,6 @@
 
     // ---- touch callbacks ----
     onPointerDown(x, y, id) {
-      // Tapping the button starts the motion sensors (needs this gesture on iOS).
-      if (Motion.supported && !Motion.enabled &&
-          x >= this.btn.x && x <= this.btn.x + this.btn.w &&
-          y >= this.btn.y && y <= this.btn.y + this.btn.h) {
-        Motion.enable();
-        Orientation.lockCurrent();   // pin rotation so tilting doesn't flip the screen
-      }
       this.pointers.set(id, { x, y, sx: x, sy: y, st: performance.now() });
       if (this.pointers.size > this.maxTouches) this.maxTouches = this.pointers.size;
       if (this.pointers.size === 2) {
@@ -328,15 +343,8 @@
       ctx.beginPath(); ctx.arc(this.ball.x, this.ball.y, 14, 0, Math.PI * 2);
       ctx.fillStyle = sensing ? "#c9a96e" : "#444444";
       ctx.fill();
-      // enable button
-      if (Motion.supported && !Motion.enabled) {
-        const b = this.btn;
-        roundRect(ctx, b.x, b.y, b.w, b.h, 8);
-        ctx.fillStyle = "#c9a96e"; ctx.fill();
-        ctx.fillStyle = "#4a3010"; ctx.font = "500 13px system-ui, sans-serif";
-        ctx.textAlign = "center"; ctx.textBaseline = "middle";
-        ctx.fillText("Tap to enable motion", b.x + b.w / 2, b.y + b.h / 2);
-      }
+      // show/hide the real DOM enable button (drawn by the browser, not canvas)
+      this.enableBtn.style.display = (Motion.supported && !Motion.enabled) ? "block" : "none";
 
       // --- Card 3: swipe & gesture ---
       this._card(ctx, c2, "Swipe & Gesture");
@@ -488,11 +496,11 @@
                           (DO && typeof DO.requestPermission === "function");
       if (needsPrompt) {                                  // iOS path
         const reqs = [];
-        if (DM && DM.requestPermission) reqs.push(DM.requestPermission());
-        if (DO && DO.requestPermission) reqs.push(DO.requestPermission());
+        if (DM && DM.requestPermission) reqs.push(DM.requestPermission().catch(() => "error"));
+        if (DO && DO.requestPermission) reqs.push(DO.requestPermission().catch(() => "error"));
         Promise.all(reqs)
           .then((rs) => {
-            if (rs.every((r) => r === "granted")) start();
+            if (rs.indexOf("granted") !== -1) start();    // any grant is enough
             else this.error = "permission: " + rs.join("/");
           })
           .catch((err) => { this.error = String(err && err.message || err); });
