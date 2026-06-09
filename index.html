@@ -67,6 +67,8 @@
                          tap (user gesture) - iOS requires it for permission.
        Motion.supported  true if the device exposes orientation events
        Motion.enabled    true once sensors are running
+       Orientation.lockCurrent()  lock rotation to the current orientation
+                         (enters fullscreen first; call from a tap; Android only)
 
      The demo below is a TABLET CAPABILITY TEST that exercises multitouch,
      the accelerometer/tilt sensor, and swipe + pinch gestures. Replace it freely.
@@ -141,6 +143,7 @@
           x >= this.btn.x && x <= this.btn.x + this.btn.w &&
           y >= this.btn.y && y <= this.btn.y + this.btn.h) {
         Motion.enable();
+        Orientation.lockCurrent();   // pin rotation so tilting doesn't flip the screen
       }
       this.pointers.set(id, { x, y, sx: x, sy: y, st: performance.now() });
       if (this.pointers.size > this.maxTouches) this.maxTouches = this.pointers.size;
@@ -495,6 +498,24 @@
           .catch((err) => { this.error = String(err && err.message || err); });
       } else {                                            // Android / desktop
         start();
+      }
+    }
+  };
+
+  // Orientation lock. The Screen Orientation API only permits locking while
+  // fullscreen or installed as a PWA, so we briefly enter fullscreen first.
+  // Call from a tap (user gesture). iOS Safari does not support this.
+  const Orientation = {
+    lockCurrent() {
+      const so = screen.orientation;
+      if (!so || !so.lock) return;
+      const mode = so.type || "portrait-primary";   // lock to whatever it is now
+      const el = document.documentElement;
+      const tryLock = () => { try { so.lock(mode).catch(() => {}); } catch (e) {} };
+      if (!document.fullscreenElement && el.requestFullscreen) {
+        el.requestFullscreen().then(tryLock).catch(tryLock);
+      } else {
+        tryLock();
       }
     }
   };
