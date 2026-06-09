@@ -1,6 +1,6 @@
 // Bump this version string whenever you change any cached file,
 // otherwise phones will keep serving the old copy from cache.
-const CACHE = "touch-game-v5";
+const CACHE = "touch-game-v2";
 
 const ASSETS = [
   "./",
@@ -25,10 +25,22 @@ self.addEventListener("activate", (e) => {
   self.clients.claim();
 });
 
-// Cache-first: instant launch, full offline play.
+// HTML pages: network-first, so a freshly uploaded build always shows when online
+// (falls back to cache offline). Other assets: cache-first for instant launch.
 self.addEventListener("fetch", (e) => {
-  if (e.request.method !== "GET") return;
-  e.respondWith(
-    caches.match(e.request).then((hit) => hit || fetch(e.request))
-  );
+  const req = e.request;
+  if (req.method !== "GET") return;
+  if (req.mode === "navigate") {
+    e.respondWith(
+      fetch(req)
+        .then((res) => {
+          const copy = res.clone();
+          caches.open(CACHE).then((c) => c.put(req, copy));
+          return res;
+        })
+        .catch(() => caches.match(req).then((hit) => hit || caches.match("./index.html")))
+    );
+    return;
+  }
+  e.respondWith(caches.match(req).then((hit) => hit || fetch(req)));
 });
