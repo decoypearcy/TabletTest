@@ -1,207 +1,178 @@
-# Touch Game Kit
+# HTML Touch Game Kit - template reference
 
-A copy-and-reuse starter for simple HTML games that run **fullscreen** on Android
-and iPhone/iPad touchscreens and install to the **home screen as an app icon**.
+A reusable base for simple HTML games that run fullscreen on Android and iPad/iPhone
+touchscreens and install to the home screen as an app icon. Touch, multitouch, swipe,
+pinch, accelerometer/tilt, orientation lock, offline play and installability are all
+already solved. A new game is built by replacing one fenced section of `index.html`.
 
-All the fiddly parts are already solved: hi-dpi canvas, the frame loop, touch input,
-multitouch, accelerometer/tilt, no-zoom / no-scroll behaviour, pause-on-background,
-offline play, and home-screen install. You write game logic in one clearly marked
-section of `index.html`.
+This README is written first as a note-to-self for Claude on how to reuse this structure,
+and second as deployment instructions for Andrew. The division of labour:
 
-The demo that ships in the kit is a **tablet capability test** - press it with several
-fingers, tilt the device, and swipe/pinch to confirm multitouch, the accelerometer, and
-gestures all work before you build a real game on top. Replace that section with your own.
+- Claude handles everything inside the files: writing the game, renaming the app,
+  regenerating icons, and bumping the cache version.
+- Andrew handles hosting and installing (GitHub Pages + Add to Home Screen).
 
-## What's in here
+---
 
-```
-index.html              The shell + engine + your game (edit the fenced section)
-manifest.webmanifest    Makes it installable on Android (name, icons, fullscreen)
-sw.js                   Service worker - installability + full offline play
-icon-192.png            App icon (Android)
-icon-512.png            App icon (Android, also splash)
-apple-touch-icon.png    App icon (iOS home screen, 180x180)
-```
+## For Claude - building a game from this template
 
-## The workflow
-
-1. Copy this folder. Rename it per game.
-2. Open `index.html`, edit the section marked **YOUR GAME GOES HERE**.
-3. Push the folder to GitHub Pages (or any HTTPS host).
-4. Open the URL on your phone and install it to the home screen.
-
-That's it. Home-screen-installed = launches chromeless and fullscreen automatically,
-on both platforms.
-
-## Why it must be hosted over HTTPS
-
-Service workers and Android's install prompt only work over HTTPS (or `localhost`).
-Opening the file directly with `file://`, or over plain `http`, will run the game but
-**won't** be installable. GitHub Pages gives you free HTTPS, which is why it's the
-recommended host below.
-
-## Hosting on GitHub Pages
-
-GitHub Pages serves a repo's files as a static HTTPS site for free. The result is a URL
-like `https://your-username.github.io/repo-name/` that you open on your phone and install.
-
-### One-time setup (per game) - via the website, no command line
-
-1. **Create the repo.** On github.com, click **New** (top-left **+** -> *New repository*).
-   Give it a name (e.g. `touch-game`). Set it **Public** - Pages is free for public repos.
-   Leave everything else default and click **Create repository**.
-2. **Upload the kit files.** On the empty repo page, click **uploading an existing file**
-   (or **Add file -> Upload files**). Drag in the **contents** of the `game-kit` folder -
-   that is `index.html`, `manifest.webmanifest`, `sw.js`, and the three PNG icons.
-
-   Important: upload the files themselves, **not** the `game-kit` folder. `index.html` must
-   sit at the repo root, or the paths and service worker won't resolve.
-3. Click **Commit changes**.
-4. **Turn on Pages.** Go to the repo's **Settings** tab -> **Pages** (left sidebar).
-   Under *Build and deployment*, set **Source = Deploy from a branch**, **Branch = main**,
-   folder **/(root)**, then **Save**.
-5. Wait ~1-2 minutes. Refresh the Pages settings page; it shows the live URL:
-   `https://<your-username>.github.io/<repo-name>/`. Open that on your phone and install
-   (see the next section).
-
-### Updating after you edit a game
-
-- **Website way:** open the changed file in the repo, click the pencil (Edit), paste your
-  changes, **Commit**. Or **Add file -> Upload files** and drop the new versions in to
-  overwrite. Pages redeploys automatically in a minute or two.
-- **Git way (if you clone the repo locally):**
+### File structure
 
 ```
-git add .
-git commit -m "update game"
-git push
+index.html              Shell + engine + game. Edit only the fenced "YOUR GAME GOES HERE".
+manifest.webmanifest    App name, icons, fullscreen display, orientation (Android install).
+sw.js                   Service worker. Cache-first. Has a CACHE version string + ASSETS list.
+icon-192.png            Android icon (manifest, "any maskable").
+icon-512.png            Android icon (manifest, "any maskable").
+apple-touch-icon.png    iOS home-screen icon, 180x180, solid background (iOS ignores alpha).
 ```
 
-- Either way, **bump the `CACHE` version in `sw.js`** (e.g. `touch-game-v1` -> `v2`) when
-  you change files, or installed phones keep serving the old cached copy. See the
-  *After you change anything* section below.
+Keep all paths relative (`./index.html`, `sw.js`, `icon-192.png`). The published site lives
+under `/repo-name/`, so a leading-slash path breaks.
 
-### GitHub Pages gotchas
+### Where the game goes
 
-- **Use relative paths.** This kit already does (`./index.html`, `sw.js`, `icon-192.png`).
-  Avoid leading-slash paths like `/icon-192.png` - on Pages the site lives under
-  `/repo-name/`, so a leading slash points at the wrong place.
-- **First deploy can lag.** If you get a 404 right after enabling Pages, give it a couple of
-  minutes and hard-refresh.
-- **One game per repo is simplest.** You can host several under one repo in subfolders, but
-  then each game's URL is `.../repo-name/game-folder/` and everything (manifest `start_url`,
-  `scope`, the `sw.js` register path) must stay relative - which this kit already is.
-
-### Testing locally first (optional)
-
-To try a game on your phone over your own network before publishing, run a quick server on
-your PC and open your PC's LAN IP from the phone:
+Everything above the `ENGINE PLUMBING` banner in `index.html` is the `Game` object. Implement:
 
 ```
-python -m http.server 8000
+setup(W, H)                 once at start; W/H = screen size in CSS pixels
+update(dt)                  each frame; dt = seconds since last frame
+draw(ctx, W, H)             each frame; draw in CSS pixels (canvas is pre-scaled for retina)
+onPointerDown(x, y, id)     touch/mouse down, coords already in canvas space
+onPointerMove(x, y, id)     optional
+onPointerUp(x, y, id)       optional
+onTilt(beta, gamma, alpha)  optional; device orientation angles (degrees)
+onMotion(ax, ay, az)        optional; accelerationIncludingGravity (m/s^2)
+onResize(W, H)              optional; rotate/resize
 ```
 
-LAN `http` still won't pass the install/offline checks - that needs HTTPS - but it's fine
-for trying the gameplay itself.
-
-## Installing on the phone
-
-**Android (Chrome):** open the URL. Chrome shows an install prompt, or use
-menu -> "Add to Home screen" / "Install app". Launches fullscreen with no browser bar.
-
-**iPhone / iPad (Safari):** open the URL in **Safari** (not Chrome - only Safari can
-install on iOS). Tap Share -> "Add to Home Screen". Launches in a chromeless standalone
-view. iOS uses `apple-touch-icon.png` for the icon, not the manifest icons.
-
-## Making a new game
-
-The engine calls these methods on the `Game` object for you:
-
-- `setup(W, H)` - run once; `W`/`H` are screen size in CSS pixels
-- `update(dt)` - run each frame; `dt` is seconds since the last frame
-- `draw(ctx, W, H)` - run each frame; draw with the 2D context in CSS pixels
-- `onPointerDown(x, y, id)` / `onPointerMove` / `onPointerUp` - touch + mouse
-- `onTilt(beta, gamma, alpha)` - device tilt in degrees (after `Motion.enable()`)
-- `onMotion(ax, ay, az)` - acceleration including gravity (after `Motion.enable()`)
-- `onResize(W, H)` - optional, fires on rotate/resize
-
-Use `store.get(key, default)` and `store.set(key, value)` for high scores etc.
-The canvas already scales for retina displays, so just draw in plain pixels.
-
-### Multitouch
-
-Every finger fires its own `onPointerDown` / `onPointerMove` / `onPointerUp` with a unique
-`id`. Track them in a `Map` keyed by `id` (the demo does exactly this) to handle several
-touches at once - pinch, two-thumb controls, multi-tap, etc.
-
-### Accelerometer / tilt
-
-Sensors are off until you call `Motion.enable()` **from inside a tap handler** - iOS 13+
-only grants motion permission in response to a user gesture, which is why the demo has a
-"Tap to enable motion" button. After that, `Game.onTilt` and `Game.onMotion` start firing.
-Read `Motion.supported` and `Motion.enabled` to drive your UI.
-
-Two different sensor events feed these:
-
-- `Game.onMotion(ax, ay, az)` comes from `devicemotion` (`accelerationIncludingGravity`).
-  This is the **reliable** one on Android/Chrome (Pixel etc.) and is what the demo uses to
-  roll the ball - gravity's x/y components tell you which way the device is tilted, and it
-  also spikes when you shake. Prefer this for tilt-controlled gameplay.
-- `Game.onTilt(beta, gamma, alpha)` comes from `deviceorientation` (tilt angles in degrees).
-  Cleaner angles, but Chrome on Android sometimes never delivers it - so treat it as a
-  bonus, not your primary input. The demo shows it as a readout and falls back to it only
-  if `devicemotion` is silent.
-
-Gotchas if the readout stays blank / the ball won't move:
-
-- **HTTPS required.** Sensors only fire over HTTPS (or `localhost`). A plain `http` LAN
-  address discovers the sensor but delivers no data - publish to GitHub Pages and test the
-  real URL, or install to the home screen.
-- **Chrome site setting.** Chrome Android has Settings -> Site settings -> Motion sensors
-  (or a per-site permission). If it's off, no events arrive even over HTTPS.
-- The demo's card shows live `accel x/y/z` and `tilt β/γ`. If both stay at "waiting…",
-  it's HTTPS/permission. If `accel` shows numbers, the ball will respond.
-
-### Swipe / gesture
-
-There's no dedicated swipe event - derive it in `onPointerUp` from the distance and time
-since that pointer's `onPointerDown` (the demo flags a swipe when a finger travels >40px in
-under 700ms and picks the dominant axis for direction). Pinch is just the changing distance
-between two active pointers.
-
-## Locking orientation
-
-There are two ways, because browsers only allow a page to lock rotation while it's
-**fullscreen** or installed as a **PWA** - a plain browser tab can't lock on its own.
-
-**Installed app (permanent, no code):** edit `manifest.webmanifest` -> `"orientation"`:
-`"portrait"`, `"landscape"`, or `"any"`. The home-screen-installed app then stays locked.
-Android respects this. iOS standalone does **not** enforce it - if you need a fixed
-orientation on iPhone, design your `draw()` to handle both, or show a "rotate your device"
-overlay when `W`/`H` are the wrong way round.
-
-**At runtime (works in a browser tab too):** call `Orientation.lockCurrent()` from a tap.
-It briefly enters fullscreen, then locks to whatever orientation the device is currently in
-(via the Screen Orientation API). The demo calls this when you tap "Enable motion", so the
-screen stops flipping while you test the accelerometer. To lock a specific way instead,
-rotate the device first, then tap - or call `screen.orientation.lock("landscape")` yourself
-after going fullscreen. This is Android/Chrome; iOS Safari ignores it (use the manifest +
-home-screen install there, or just turn off the system auto-rotate).
-
-## After you change anything
-
-The service worker caches files aggressively so the game loads instantly and works
-offline. When you edit a file, bump the version string in `sw.js`:
+Engine helpers available to the game:
 
 ```
-const CACHE = "touch-game-v2";   // was v1
+store.get(key, default) / store.set(key, value)   localStorage, wrapped in try/catch
+Motion.enable()         start sensors; MUST be called from a real DOM click (see below)
+Motion.supported/enabled/secure/fileOrigin/permState/motionEvents/hasMotionData/...   diagnostics
+Orientation.lockCurrent()   lock rotation to current orientation (Android; needs fullscreen/PWA)
 ```
 
-Phones pick up the new version on next launch. Without bumping it, they keep serving the
-old cached copy.
+The engine owns: hi-dpi canvas + resize, the delta-timed RAF loop, pointer normalisation,
+pause-on-background, service-worker registration, the Motion/Orientation helpers, and the
+DOM permission button. The game should not need to touch any of it.
 
-## Renaming the app
+### Claude's checklist for every new project or update
 
-Change the name in two places: `manifest.webmanifest` (`name` / `short_name`) and the
-`apple-mobile-web-app-title` / `<title>` tags in `index.html`. Replace the three icon PNGs
-with your own (keep the same filenames and sizes: 192, 512, and 180 for Apple).
+Do these automatically, without being asked - they are pure boilerplate:
+
+1. Name. Set the app name in `manifest.webmanifest` (`name`, `short_name`, `description`),
+   the `<title>`, and the `apple-mobile-web-app-title` meta tag - keep them consistent.
+2. Icons. Regenerate `icon-192.png`, `icon-512.png`, `apple-touch-icon.png` themed to the
+   game (keep the same filenames and sizes: 192, 512, and 180 solid-background for Apple).
+   Keep the icon shape inside the central ~60% so Android maskable cropping doesn't clip it.
+3. Cache version. Bump the `CACHE` string in `sw.js` (`game-v1` -> `game-v2` ...) on every
+   change, or phones keep serving the old cached copy. Keep the `ASSETS` list in sync if any
+   filenames change.
+4. Paths stay relative. Never introduce a leading-slash path.
+
+Andrew should not have to edit any of the above.
+
+---
+
+## Touch protocol (how input works, and the rules that keep it reliable)
+
+- The engine listens for pointer events on the canvas and converts client coords to canvas
+  CSS pixels before calling the `onPointer*` callbacks. Work in CSS pixels everywhere.
+- Multitouch: each finger is a separate `pointerId` with its own down/move/up. Track active
+  touches in a `Map` keyed by `id`. Never assume a single touch.
+- Swipe: there is no swipe event. Derive it in `onPointerUp` from the start position/time
+  recorded in `onPointerDown` (demo: >40px travel in <700ms, dominant axis = direction).
+- Pinch: the changing distance between two simultaneously-active pointers. Capture the start
+  distance when the second finger lands; scale = current / start.
+- Pointerdown calls `preventDefault()` and the page uses `touch-action: none`,
+  `overscroll-behavior: none`, and blocks `gesturestart`/`dblclick`. This is what stops
+  scrolling, pull-to-refresh, pinch-zoom and double-tap-zoom from fighting game input.
+  Keep these - removing them brings the mobile browser gestures back.
+
+Touch and gestures work on any origin, including `file://` and inside in-app browsers.
+Sensors do not (see below) - that asymmetry caused most of the confusion we hit.
+
+## Sensor protocol (accelerometer / tilt) and the traps to avoid
+
+How it works in this kit:
+
+- `Motion.enable()` requests permission on iOS (`DeviceMotionEvent.requestPermission` /
+  `DeviceOrientationEvent.requestPermission`) and auto-starts on Android. It then listens to
+  `devicemotion` -> `onMotion(ax, ay, az)` and `deviceorientation` -> `onTilt(...)`, also
+  starts the Generic Sensor API `Accelerometer` (better error reporting), and reads the
+  Permissions API state. It only reports real data, never null-coerced zeros.
+- Drive tilt gameplay from `onMotion` (`accelerationIncludingGravity`), not `onTilt`.
+
+The traps we hit, and how this template avoids each one:
+
+- file:// blocks sensors. A downloaded `index.html` opened directly is a `file://` origin.
+  It reports `isSecureContext === true` (misleading) but is an opaque origin, so motion
+  sensors are denied (`permission: denied`, `NotAllowedError`). Always serve over HTTPS.
+  The diagnostic card now prints `origin: file:// needs https` so this is obvious.
+- HTTPS is mandatory for both the service worker (installability/offline) and the sensors.
+  GitHub Pages provides it for free.
+- In-app WebView / iframe blocks sensors via permissions policy (shows `context: in-app
+  WebView` or `embedded iframe`). Open in real Chrome, or launch the installed home-screen
+  app. If embedding deliberately, the iframe needs `allow="accelerometer; gyroscope;
+  magnetometer"`.
+- iOS permission must come from a genuine DOM click. iOS Safari will not raise the motion
+  prompt from a canvas pointer event. That is why the enable control is a real
+  `<button id="enableBtn">` overlaid on the canvas, with its `onclick` calling
+  `Motion.enable()`. Do not move that action back onto a canvas tap.
+- Android `deviceorientation` is often empty even when motion works. `devicemotion` is the
+  reliable source on Android, which is why the ball is driven by it.
+- Device/browser settings that block sensors (not code): Android's "Sensors off" quick tile,
+  Chrome's per-site Motion sensors permission, and iOS Settings -> Safari -> Motion &
+  Orientation Access. The card's `permission:` / `sensor:` lines reveal these.
+
+Orientation lock: `Orientation.lockCurrent()` enters fullscreen first (the Screen
+Orientation API only locks while fullscreen or installed as a PWA), then locks to the
+current orientation. Android/Chrome only; iOS ignores programmatic locks. For a permanent
+lock on the installed app, set `"orientation": "portrait"` (or `"landscape"`) in the
+manifest.
+
+---
+
+## For Andrew - hosting and installing
+
+### Publish to GitHub Pages (free HTTPS)
+
+1. Create a public repo on github.com.
+2. Add file -> Upload files, and drop in the kit's contents - `index.html`,
+   `manifest.webmanifest`, `sw.js`, and the three PNG icons. Upload the files themselves, not
+   the folder, so `index.html` sits at the repo root. Commit.
+3. Settings -> Pages -> Source: Deploy from a branch, Branch: main, folder: /(root). Save.
+4. Wait ~1-2 minutes; the live URL appears: `https://<username>.github.io/<repo>/`.
+
+Open that URL on the phone (not a `file://` copy, not an in-app browser link).
+
+### Install to the home screen
+
+- Android (Chrome): open the URL, then the install prompt or menu -> Install app / Add to
+  Home screen. Launches fullscreen.
+- iPad / iPhone (Safari): open the URL in Safari, Share -> Add to Home Screen. Launches in a
+  chromeless standalone view. On iPad this is also the most reliable way to get the motion
+  sensor working (it avoids desktop-mode quirks).
+
+Installing to the home screen gives a top-level secure context, so sensors, fullscreen and
+orientation all behave - which is the environment the finished game actually ships in.
+
+### Updating after Claude changes the files
+
+Re-upload the changed files (Add file -> Upload files, overwrite) or push with git. Claude
+already bumps the `sw.js` cache version, so phones pick up the new build on next launch. If a
+device looks stale, hard-refresh once.
+
+### Quick troubleshooting
+
+The accelerometer card prints a live diagnosis. Read it top to bottom:
+
+- `origin: file:// needs https` -> you opened a local file. Use the GitHub Pages URL.
+- `NOT https` -> not a secure origin. Use HTTPS.
+- `permission: denied` / `sensor: NotAllowedError` -> blocked by context or settings; check
+  the `context:` line (WebView/iframe vs top-level) and the device sensor settings above.
+- `context: in-app WebView` -> open in real Chrome or the installed app.
+- moving `accel x/y/z` numbers -> working.

@@ -211,9 +211,10 @@
       if (Motion.enabled && (this.accel.received || this.tilt.received)) {
         let ax, ay;
         if (this.accel.received) {
-          // gravity components: tilt the device, gravity pushes the ball downhill
-          ax = this.accel.x * 40;
-          ay = -this.accel.y * 40;
+          // accelerationIncludingGravity points AWAY from the lowered edge, so negate
+          // to roll the ball downhill (with the tilt) rather than uphill (bubble-level).
+          ax = -this.accel.x * 40;
+          ay = this.accel.y * 40;
         } else {
           // fallback to orientation angles if devicemotion isn't delivering
           ax = this.tilt.gamma * 6;
