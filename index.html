@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <!-- viewport-fit=cover lets the canvas reach under notches; no zoom on touch -->
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <title>Touch Game</title>
+  <meta name="theme-color" content="#1a1a1a">
+  <link rel="manifest" href="manifest.webmanifest">
+
+  <!-- iOS: enables Add to Home Screen + chromeless fullscreen launch -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Touch Game">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
+
+  <style>
+    :root { --sat: env(safe-area-inset-top); }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      height: 100%;
+      background: #1a1a1a;
+      overflow: hidden;
+      overscroll-behavior: none;       /* kill pull-to-refresh / rubber-banding */
+    }
+    body {
+      touch-action: none;              /* we handle all touch ourselves */
+      -webkit-user-select: none;
+      user-select: none;
+      -webkit-tap-highlight-color: transparent;
+      -webkit-touch-callout: none;
+    }
+    #c {
+      display: block;
+      width: 100vw;
+      height: 100vh;
+      height: 100dvh;                  /* correct fullscreen height on mobile */
+      touch-action: none;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="c"></canvas>
+
+  <script>
+  "use strict";
+
+  /* ============================================================
+     YOUR GAME GOES HERE
+     ------------------------------------------------------------
+     Implement these methods on the Game object. The engine below
+     calls them for you:
+       setup(W, H)              once at start, W/H = screen size in CSS px
+       update(dt)               every frame, dt = seconds since last frame
+       draw(ctx, W, H)          every frame, draw using ctx (in CSS pixels)
+       onPointerDown(x, y, id)  finger/mouse pressed at x,y
+       onPointerMove(x, y, id)  (optional) finger/mouse moved
+       onPointerUp(x, y, id)    (optional) finger/mouse released
+       onTilt(beta, gamma, alpha)  (optional) device tilt in degrees
+       onMotion(ax, ay, az)        (optional) acceleration incl. gravity
+       onResize(W, H)           (optional) screen rotated/resized
+
+     Helpers available:
+       store.get(key, default) / store.set(key, value)
+       Motion.enable()   start tilt/motion sensors. MUST be called from a
+                         tap (user gesture) - iOS requires it for permission.
+       Motion.supported  true if the device exposes orientation events
+       Motion.enabled    true once sensors are running
+
+     The demo below is a TABLET CAPABILITY TEST that exercises multitouch,
+     the accelerometer/tilt sensor, and swipe + pinch gestures. Replace it freely.
+     ============================================================ */
+
+  // Drawing helper: rounded rectangle path (used by the cards below).
+  function roundRect(ctx, x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+
+  const Game = {
+    setup() {
+      this.pointers = new Map();      // id -> { x, y, sx, sy, st }  (live touches)
+      this.maxTouches = 0;
+      this.lastSwipe = null;          // { dir, dist }
+      this.pinch = { active: false, startDist: 0, scale: 1 };
+      this.tilt = { beta: 0, gamma: 0, alpha: 0, received: false };
+      this.accel = { x: 0, y: 0, z: 0, received: false }; // accelerationIncludingGravity
+      this.shake = 0;                 // brief flash when a shake is detected
+      this._lastMag = null;
+      this.ball = null;
+      this.layout();
+    },
+
+    layout() {
+      const pad = 16, gap = 12;
+      const top = (this.safeTop || 0) + pad;
+      const x = pad, w = W - pad * 2;
+      const ch = (H - top - pad - gap * 2) / 3;
+      this.cards = [
+        { x, y: top, w, h: ch },
+        { x, y: top + ch + gap, w, h: ch },
+        { x, y: top + (ch + gap) * 2, w, h: ch }
+      ];
+      const c2 = this.cards[1];
+      const bw = Math.min(220, c2.w - 32), bh = 40;
+      this.btn = { x: c2.x + (c2.w - bw) / 2, y: c2.y + c2.h - bh - 16, w: bw, h: bh };
+      if (!this.ball) this.ball = { x: c2.x + c2.w / 2, y: c2.y + c2.h / 2, vx: 0, vy: 0 };
+    },
+
+    onResize() {
+      const v = getComputedStyle(document.documentElement).getPropertyValue("--sat");
+      this.safeTop = parseInt(v, 10) || 0;
+      this.layout();
+    },
+
+    // ---- sensor callbacks ----
+    onTilt(beta, gamma, alpha) {
+      this.tilt.beta = beta; this.tilt.gamma = gamma; this.tilt.alpha = alpha;
+      this.tilt.received = true;
+    },
+
+    onMotion(ax, ay, az) {
+      this.accel.x = ax; this.accel.y = ay; this.accel.z = az;
+      this.accel.received = true;
+      // shake = sudden change in total acceleration magnitude
+      const mag = Math.hypot(ax, ay, az);
+      if (this._lastMag != null && Math.abs(mag - this._lastMag) > 6) this.shake = 1;
+      this._lastMag = mag;
+    },
+
+    // ---- touch callbacks ----
+    onPointerDown(x, y, id) {
+      // Tapping the button starts the motion sensors (needs this gesture on iOS).
+      if (Motion.supported && !Motion.enabled &&
+          x >= this.btn.x && x <= this.btn.x + this.btn.w &&
+          y >= this.btn.y && y <= this.btn.y + this.btn.h) {
+        Motion.enable();
+      }
+      this.pointers.set(id, { x, y, sx: x, sy: y, st: performance.now() });
+      if (this.pointers.size > this.maxTouches) this.maxTouches = this.pointers.size;
+      if (this.pointers.size === 2) {
+        this.pinch.active = true;
+        this.pinch.startDist = this._twoFingerDist();
+        this.pinch.scale = 1;
+      }
+    },
+
+    onPointerMove(x, y, id) {
+      const p = this.pointers.get(id);
+      if (p) { p.x = x; p.y = y; }
+      if (this.pinch.active && this.pointers.size >= 2 && this.pinch.startDist > 0) {
+        this.pinch.scale = this._twoFingerDist() / this.pinch.startDist;
+      }
+    },
+
+    onPointerUp(x, y, id) {
+      const p = this.pointers.get(id);
+      if (p) {
+        const dx = x - p.sx, dy = y - p.sy;
+        const dist = Math.hypot(dx, dy);
+        const ms = performance.now() - p.st;
+        if (dist > 40 && ms < 700) {     // a flick, not a slow drag
+          const dir = Math.abs(dx) > Math.abs(dy)
+            ? (dx > 0 ? "right" : "left")
+            : (dy > 0 ? "down" : "up");
+          this.lastSwipe = { dir, dist: Math.round(dist) };
+        }
+      }
+      this.pointers.delete(id);
+      if (this.pointers.size < 2) this.pinch.active = false;
+    },
+
+    _twoFingerDist() {
+      const it = this.pointers.values();
+      const a = it.next().value, b = it.next().value;
+      if (!a || !b) return 0;
+      return Math.hypot(a.x - b.x, a.y - b.y);
+    },
+
+    update(dt) {
+      const c = this.cards[1], r = 14;
+      const minX = c.x + 16 + r, maxX = c.x + c.w - 16 - r;
+      const minY = c.y + 38 + r, maxY = this.btn.y - 12 - r;
+
+      if (this.shake > 0) this.shake = Math.max(0, this.shake - dt * 3);
+
+      if (Motion.enabled && (this.accel.received || this.tilt.received)) {
+        let ax, ay;
+        if (this.accel.received) {
+          // gravity components: tilt the device, gravity pushes the ball downhill
+          ax = this.accel.x * 40;
+          ay = -this.accel.y * 40;
+        } else {
+          // fallback to orientation angles if devicemotion isn't delivering
+          ax = this.tilt.gamma * 6;
+          ay = this.tilt.beta * 6;
+        }
+        this.ball.vx += ax * dt;
+        this.ball.vy += ay * dt;
+        const damp = 1 - Math.min(1, 2.5 * dt);
+        this.ball.vx *= damp; this.ball.vy *= damp;
+        this.ball.x += this.ball.vx * dt;
+        this.ball.y += this.ball.vy * dt;
+        if (this.ball.x < minX) { this.ball.x = minX; this.ball.vx *= -0.4; }
+        if (this.ball.x > maxX) { this.ball.x = maxX; this.ball.vx *= -0.4; }
+        if (this.ball.y < minY) { this.ball.y = minY; this.ball.vy *= -0.4; }
+        if (this.ball.y > maxY) { this.ball.y = maxY; this.ball.vy *= -0.4; }
+      } else {
+        this.ball.x = (minX + maxX) / 2;
+        this.ball.y = (minY + maxY) / 2;
+      }
+    },
+
+    // ---- drawing ----
+    _card(ctx, c, label) {
+      roundRect(ctx, c.x, c.y, c.w, c.h, 12);
+      ctx.fillStyle = "#242424"; ctx.fill();
+      ctx.strokeStyle = "#363636"; ctx.lineWidth = 0.5; ctx.stroke();
+      ctx.fillStyle = "#686260";
+      ctx.font = "500 10px system-ui, sans-serif";
+      ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillText(label.toUpperCase(), c.x + 16, c.y + 14);
+    },
+
+    draw(ctx, W, H) {
+      ctx.fillStyle = "#1a1a1a";
+      ctx.fillRect(0, 0, W, H);
+
+      const c0 = this.cards[0], c1 = this.cards[1], c2 = this.cards[2];
+
+      // --- Card 1: multitouch ---
+      this._card(ctx, c0, "Multitouch");
+      ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
+      ctx.fillStyle = "#e8e5e0"; ctx.font = "600 40px system-ui, sans-serif";
+      ctx.fillText(String(this.pointers.size), c0.x + 16, c0.y + c0.h - 20);
+      ctx.fillStyle = "#a09890"; ctx.font = "400 13px system-ui, sans-serif";
+      ctx.fillText("fingers down", c0.x + 16 + 56, c0.y + c0.h - 22);
+      ctx.fillStyle = "#686260"; ctx.font = "400 12px system-ui, sans-serif";
+      ctx.textAlign = "right";
+      ctx.fillText("max " + this.maxTouches + "  ·  press with several fingers",
+        c0.x + c0.w - 16, c0.y + 18);
+
+      // --- Card 2: accelerometer / tilt ---
+      this._card(ctx, c1, "Accelerometer / Tilt");
+      if (this.shake > 0) {           // flash the border when shaken
+        roundRect(ctx, c1.x, c1.y, c1.w, c1.h, 12);
+        ctx.strokeStyle = "#c9a96e"; ctx.lineWidth = 2;
+        ctx.globalAlpha = this.shake; ctx.stroke(); ctx.globalAlpha = 1;
+      }
+      const sensing = Motion.enabled && (this.accel.received || this.tilt.received);
+      ctx.textAlign = "right"; ctx.textBaseline = "top";
+      if (!Motion.supported) {
+        ctx.fillStyle = "#e87060"; ctx.font = "400 12px system-ui, sans-serif";
+        ctx.fillText("not available on this device", c1.x + c1.w - 16, c1.y + 18);
+      } else if (Motion.enabled) {
+        const rx = c1.x + c1.w - 16;
+        let ry = c1.y + 14;
+        ctx.font = "500 11px system-ui, sans-serif";
+
+        // secure context - note file:// reports secure but still blocks sensors
+        if (Motion.fileOrigin) {
+          ctx.fillStyle = "#e87060";
+          ctx.fillText("origin: file:// \u2717  needs https", rx, ry);
+        } else {
+          ctx.fillStyle = Motion.secure ? "#6aaa5a" : "#e87060";
+          ctx.fillText(Motion.secure ? "secure context \u2713"
+            : "NOT https \u2717  - sensors blocked", rx, ry);
+        }
+        ry += 17;
+
+        // permission state (Chrome) - the definitive granted/denied signal
+        if (Motion.permState) {
+          ctx.fillStyle = Motion.permState === "granted" ? "#6aaa5a"
+            : (Motion.permState === "denied" ? "#e87060" : "#c8982a");
+          ctx.fillText("permission: " + Motion.permState, rx, ry);
+          ry += 17;
+        }
+
+        // accelerometer (drives the ball)
+        if (Motion.hasMotionData) {
+          ctx.fillStyle = "#6aaa5a";
+          ctx.fillText("accel  x " + this.accel.x.toFixed(1) + "  y " + this.accel.y.toFixed(1) +
+            "  z " + this.accel.z.toFixed(1), rx, ry);
+        } else if (Motion.motionEvents > 0) {
+          ctx.fillStyle = "#c8982a";
+          ctx.fillText("devicemotion firing but empty (" + Motion.motionEvents + ")", rx, ry);
+        } else {
+          ctx.fillStyle = "#c8982a";
+          ctx.fillText("no devicemotion events", rx, ry);
+        }
+        ry += 17;
+
+        // orientation (informational)
+        ctx.fillStyle = "#a09890";
+        if (Motion.hasOrientData) {
+          ctx.fillText("tilt  \u03B2 " + this.tilt.beta.toFixed(0) + "\u00B0  \u03B3 " +
+            this.tilt.gamma.toFixed(0) + "\u00B0", rx, ry);
+        } else {
+          ctx.fillText(Motion.orientEvents > 0 ? "orientation empty" : "orientation: none", rx, ry);
+        }
+
+        if (Motion.error) {
+          ry += 17;
+          ctx.fillStyle = "#e87060";
+          ctx.fillText(Motion.error, rx, ry);
+        }
+
+        // If still no data, name the document context - the usual cause of a
+        // permissions-policy denial is an embedded WebView / in-app browser.
+        if (!Motion.hasMotionData) {
+          ry += 17;
+          ctx.fillStyle = "#c8982a";
+          ctx.fillText("context: " + (Motion.webview ? "in-app WebView \u2192 open in Chrome"
+            : Motion.inIframe ? "embedded iframe (needs allow=accelerometer)"
+            : "top-level"), rx, ry);
+        }
+      }
+      // ball (parked center until a sensor delivers data)
+      ctx.beginPath(); ctx.arc(this.ball.x, this.ball.y, 14, 0, Math.PI * 2);
+      ctx.fillStyle = sensing ? "#c9a96e" : "#444444";
+      ctx.fill();
+      // enable button
+      if (Motion.supported && !Motion.enabled) {
+        const b = this.btn;
+        roundRect(ctx, b.x, b.y, b.w, b.h, 8);
+        ctx.fillStyle = "#c9a96e"; ctx.fill();
+        ctx.fillStyle = "#4a3010"; ctx.font = "500 13px system-ui, sans-serif";
+        ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.fillText("Tap to enable motion", b.x + b.w / 2, b.y + b.h / 2);
+      }
+
+      // --- Card 3: swipe & gesture ---
+      this._card(ctx, c2, "Swipe & Gesture");
+      ctx.textBaseline = "alphabetic";
+      const arrows = { up: "\u2191", down: "\u2193", left: "\u2190", right: "\u2192" };
+      ctx.textAlign = "left";
+      ctx.fillStyle = this.lastSwipe ? "#e8e5e0" : "#686260";
+      ctx.font = "600 30px system-ui, sans-serif";
+      ctx.fillText(this.lastSwipe ? arrows[this.lastSwipe.dir] + " " + this.lastSwipe.dir
+        : "swipe to test", c2.x + 16, c2.y + c2.h - 22);
+      if (this.lastSwipe) {
+        ctx.fillStyle = "#686260"; ctx.font = "400 12px system-ui, sans-serif";
+        ctx.fillText(this.lastSwipe.dist + " px", c2.x + 16, c2.y + c2.h - 48);
+      }
+      ctx.textAlign = "right";
+      ctx.fillStyle = this.pinch.active ? "#c9a96e" : "#686260";
+      ctx.font = "500 13px system-ui, sans-serif";
+      ctx.textBaseline = "top";
+      ctx.fillText("pinch \u00D7 " + this.pinch.scale.toFixed(2), c2.x + c2.w - 16, c2.y + 18);
+
+      // --- live touch dots, drawn over everything ---
+      let n = 0;
+      for (const p of this.pointers.values()) {
+        n++;
+        ctx.beginPath(); ctx.arc(p.x, p.y, 26, 0, Math.PI * 2);
+        ctx.strokeStyle = "#c9a96e"; ctx.lineWidth = 2; ctx.stroke();
+        ctx.fillStyle = "rgba(201,169,110,0.12)"; ctx.fill();
+        ctx.fillStyle = "#e8e5e0"; ctx.font = "600 13px system-ui, sans-serif";
+        ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.fillText(String(n), p.x, p.y);
+      }
+    }
+  };
+
+  /* ============================================================
+     ENGINE PLUMBING  -  you normally don't need to touch below.
+     Handles: hi-dpi canvas, resize/rotate, the frame loop,
+     touch/mouse input, pause-on-background, save/load, install.
+     ============================================================ */
+
+  const canvas = document.getElementById("c");
+  const ctx = canvas.getContext("2d");
+  let W = 0, H = 0, DPR = 1;
+
+  function resize() {
+    DPR = Math.min(window.devicePixelRatio || 1, 3);
+    W = canvas.clientWidth;
+    H = canvas.clientHeight;
+    canvas.width = Math.round(W * DPR);
+    canvas.height = Math.round(H * DPR);
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);   // draw in CSS pixels, render crisp
+    if (Game.onResize) Game.onResize(W, H);
+  }
+  window.addEventListener("resize", resize);
+  window.addEventListener("orientationchange", () => setTimeout(resize, 120));
+
+  function toCanvas(e) {
+    const r = canvas.getBoundingClientRect();
+    return { x: e.clientX - r.left, y: e.clientY - r.top };
+  }
+  canvas.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    const p = toCanvas(e);
+    if (Game.onPointerDown) Game.onPointerDown(p.x, p.y, e.pointerId);
+  }, { passive: false });
+  canvas.addEventListener("pointermove", (e) => {
+    const p = toCanvas(e);
+    if (Game.onPointerMove) Game.onPointerMove(p.x, p.y, e.pointerId);
+  }, { passive: false });
+  canvas.addEventListener("pointerup", (e) => {
+    const p = toCanvas(e);
+    if (Game.onPointerUp) Game.onPointerUp(p.x, p.y, e.pointerId);
+  }, { passive: false });
+
+  // Block iOS pinch-zoom / double-tap-zoom that would fight game input
+  document.addEventListener("gesturestart", (e) => e.preventDefault());
+  document.addEventListener("dblclick", (e) => e.preventDefault());
+
+  const store = {
+    get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : v; } catch (e) { return d; } },
+    set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+  };
+
+  // Accelerometer / device-orientation helper + diagnostics.
+  // Call Motion.enable() from a tap - iOS 13+ only grants permission from a
+  // user gesture, and sensors only return data over HTTPS (or localhost).
+  const Motion = {
+    supported: typeof DeviceOrientationEvent !== "undefined",
+    secure: window.isSecureContext,
+    fileOrigin: location.protocol === "file:",
+    enabled: false,
+    motionEvents: 0,        // how many devicemotion events have arrived
+    orientEvents: 0,        // how many deviceorientation events have arrived
+    hasMotionData: false,   // true once a non-null acceleration value is seen
+    hasOrientData: false,   // true once a non-null tilt angle is seen
+    permState: null,        // Permissions API result: granted / denied / prompt
+    error: null,            // permission denial / exception message, if any
+    inIframe: (function () { try { return window.top !== window.self; } catch (e) { return true; } })(),
+    webview: /\bwv\b/.test(navigator.userAgent) || /; wv[);]/.test(navigator.userAgent),
+    enable() {
+      if (this.enabled) return;
+      const start = () => {
+        window.addEventListener("deviceorientation", (e) => {
+          this.orientEvents++;
+          if (e.beta != null || e.gamma != null) {        // real data, not nulls
+            this.hasOrientData = true;
+            if (Game.onTilt) Game.onTilt(e.beta || 0, e.gamma || 0, e.alpha || 0);
+          }
+        });
+        window.addEventListener("devicemotion", (e) => {
+          this.motionEvents++;
+          const a = e.accelerationIncludingGravity;
+          if (a && (a.x != null || a.y != null || a.z != null)) {
+            this.hasMotionData = true;
+            if (Game.onMotion) Game.onMotion(a.x || 0, a.y || 0, a.z || 0);
+          }
+        });
+
+        // Read the actual permission state (Chrome): granted / denied / prompt
+        if (navigator.permissions && navigator.permissions.query) {
+          navigator.permissions.query({ name: "accelerometer" })
+            .then((p) => { this.permState = p.state; p.onchange = () => { this.permState = p.state; }; })
+            .catch(() => {});
+        }
+
+        // Generic Sensor API: streams where devicemotion is flaky and, crucially,
+        // emits an error with the real reason (NotReadableError = OS sensors off,
+        // NotAllowedError = permission/policy blocked).
+        if ("Accelerometer" in window) {
+          try {
+            const acl = new Accelerometer({ frequency: 60 });
+            acl.addEventListener("reading", () => {
+              this.motionEvents++; this.hasMotionData = true;
+              if (Game.onMotion) Game.onMotion(acl.x, acl.y, acl.z);
+            });
+            acl.addEventListener("error", (ev) => {
+              this.error = "sensor: " + ((ev.error && ev.error.name) || "error");
+            });
+            acl.start();
+          } catch (err) {
+            this.error = "sensor: " + (err.name || err.message);
+          }
+        }
+
+        this.enabled = true;
+      };
+      const DM = window.DeviceMotionEvent, DO = window.DeviceOrientationEvent;
+      const needsPrompt = (DM && typeof DM.requestPermission === "function") ||
+                          (DO && typeof DO.requestPermission === "function");
+      if (needsPrompt) {                                  // iOS path
+        const reqs = [];
+        if (DM && DM.requestPermission) reqs.push(DM.requestPermission());
+        if (DO && DO.requestPermission) reqs.push(DO.requestPermission());
+        Promise.all(reqs)
+          .then((rs) => {
+            if (rs.every((r) => r === "granted")) start();
+            else this.error = "permission: " + rs.join("/");
+          })
+          .catch((err) => { this.error = String(err && err.message || err); });
+      } else {                                            // Android / desktop
+        start();
+      }
+    }
+  };
+
+  let last = 0, paused = false;
+  function frame(t) {
+    if (!last) last = t;
+    let dt = (t - last) / 1000;
+    last = t;
+    if (dt > 0.1) dt = 0.1;                    // clamp big jumps after backgrounding
+    if (!paused) {
+      if (Game.update) Game.update(dt);
+      if (Game.draw) Game.draw(ctx, W, H);
+    }
+    requestAnimationFrame(frame);
+  }
+  document.addEventListener("visibilitychange", () => {
+    paused = document.hidden;
+    last = 0;
+  });
+
+  resize();
+  if (Game.setup) Game.setup(W, H);
+  requestAnimationFrame(frame);
+
+  // Service worker = installable on Android + offline play
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.register("sw.js").catch(() => {});
+  }
+  </script>
+</body>
+</html>
