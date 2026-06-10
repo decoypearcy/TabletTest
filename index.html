@@ -110,10 +110,15 @@
       this.shake = 0;                 // brief flash when a shake is detected
       this._lastMag = null;
       this.ball = null;
+      this.wantLock = false;          // user has asked to lock orientation
       // Real DOM button: iOS only raises the motion-permission prompt from a
       // genuine click. One handler, works on Android too.
       this.enableBtn = document.getElementById("enableBtn");
-      this.enableBtn.onclick = () => { Motion.enable(); Orientation.lockCurrent(); };
+      this.enableBtn.onclick = () => {
+        if (!Motion.enabled) Motion.enable();
+        this.wantLock = true;
+        Orientation.lockCurrent();
+      };
       this.layout();
     },
 
@@ -192,6 +197,16 @@
       }
       this.pointers.delete(id);
       if (this.pointers.size < 2) this.pinch.active = false;
+    },
+
+    onPointerCancel(id) {              // gesture seized by the OS - just drop it
+      this.pointers.delete(id);
+      if (this.pointers.size < 2) this.pinch.active = false;
+    },
+
+    onHide() {                         // backgrounded - clear all transient input
+      this.pointers.clear();
+      this.pinch.active = false;
     },
 
     _twoFingerDist() {
@@ -344,8 +359,20 @@
       ctx.beginPath(); ctx.arc(this.ball.x, this.ball.y, 14, 0, Math.PI * 2);
       ctx.fillStyle = sensing ? "#c9a96e" : "#444444";
       ctx.fill();
-      // show/hide the real DOM enable button (drawn by the browser, not canvas)
-      this.enableBtn.style.display = (Motion.supported && !Motion.enabled) ? "block" : "none";
+      // show/hide the real DOM enable button (drawn by the browser, not canvas).
+      // It also reappears to re-lock orientation if the lock was dropped (e.g.
+      // after the app was backgrounded, which exits fullscreen and unlocks).
+      const needEnable = Motion.supported && !Motion.enabled;
+      const lockSupported = !!(screen.orientation && screen.orientation.lock &&
+                               document.documentElement.requestFullscreen);
+      const needRelock = lockSupported && Motion.enabled && this.wantLock &&
+                         !document.fullscreenElement;
+      if (needEnable || needRelock) {
+        this.enableBtn.textContent = needEnable ? "Tap to enable motion" : "Lock orientation";
+        this.enableBtn.style.display = "block";
+      } else {
+        this.enableBtn.style.display = "none";
+      }
 
       // --- Card 3: swipe & gesture ---
       this._card(ctx, c2, "Swipe & Gesture");
@@ -418,6 +445,11 @@
   canvas.addEventListener("pointerup", (e) => {
     const p = toCanvas(e);
     if (Game.onPointerUp) Game.onPointerUp(p.x, p.y, e.pointerId);
+  }, { passive: false });
+  // pointercancel fires when the system seizes the gesture (e.g. Android's
+  // edge-swipe back). Without handling it the finger lingers as a phantom touch.
+  canvas.addEventListener("pointercancel", (e) => {
+    if (Game.onPointerCancel) Game.onPointerCancel(e.pointerId);
   }, { passive: false });
 
   // Block iOS pinch-zoom / double-tap-zoom that would fight game input
@@ -544,6 +576,7 @@
   document.addEventListener("visibilitychange", () => {
     paused = document.hidden;
     last = 0;
+    if (document.hidden && Game.onHide) Game.onHide();   // drop stale touches/gestures
   });
 
   resize();

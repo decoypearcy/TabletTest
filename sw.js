@@ -1,6 +1,6 @@
 // Bump this version string whenever you change any cached file,
 // otherwise phones will keep serving the old copy from cache.
-const CACHE = "touch-game-v2";
+const CACHE = "touch-game-v3";
 
 const ASSETS = [
   "./",
